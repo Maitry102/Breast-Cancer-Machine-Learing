@@ -1,0 +1,477 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(caret)
+library(lattice)
+library(ggplot2)
+#inlibrary(Amelia)
+library(caret)
+library(e1071)
+library(C50)
+library(tictoc)
+library(rpart.plot)
+library(rpart)
+library(rattle)
+library(RColorBrewer)
+library(corrplot)
+library(gridExtra)
+library(grid)
+library(ggplot2)
+library(lattice)
+library(factoextra)
+library(Rtsne)
+library(nnet)
+library(devtools)
+#library(ggbiplot)
+library(randomForest)
+library(party)
+library(class)
+```
+
+```{r}
+bre1<-read.csv("breast.csv")
+str(bre)
+summary(bre)
+bre<- bre1[,-1]
+
+#Data Partition 80% training 20% test data
+valid_index<-createDataPartition(bre$diagnosis,p=0.80,list = FALSE)
+bre_train<-bre[valid_index,]
+bre_test<- bre[-valid_index,]
+
+# summarize the class distribution
+percentage <- prop.table(table(bre$diagnosis)) * 100
+cbind(freq=table(bre$diagnosis), percentage=percentage)
+
+##summary of data
+summary(bre)
+sapply(bre,function(x) sum(is.na(x)))
+
+```
+Mapping NA in dataset
+
+```{r}
+missmap(bre, main = "Missing values vs observed")
+```
+#heat Map for data corresponding to M (malignant).
+```{r}
+nc=ncol(bre_train)
+dfm <- bre_train[bre_train$diagnosis=='M',4:nc-1]
+m <- data.matrix(dfm)
+cls = colorRampPalette(brewer.pal(8, "Dark2"))(256)
+heatmap(m, scale="column", col = cls, labRow=FALSE,Colv=NA, Rowv=NA)
+```
+#heat Map for data corresponding to B (benign).
+```{r}
+nc=ncol(bre_train)
+dfm <- bre_train[bre_train$diagnosis=='B',4:nc-1]
+m <- data.matrix(dfm)
+cls = colorRampPalette(brewer.pal(8, "Dark2"))(256)
+heatmap(m, scale="column", col = cls, labRow=FALSE,Colv=NA, Rowv=NA)
+```
+
+```{r}
+correlations <- cor(df,method="pearson")
+corrplot(correlations, number.cex = .9, method = "square", 
+         hclust.method = "ward", order = "FPC",
+         type = "full", tl.cex=0.8,tl.col = "black")
+```
+The highest correlations are between:
+
+perimeter_mean and radius_worst;
+area_worst and radius_worst;
+perimeter_worst and radius_worst, perimeter_mean, area_worst, area_mean, radius_mean;
+texture_mean and texture_worst;
+
+#correlation
+```{r echo=FALSE}
+library(PerformanceAnalytics)
+library(GGally)
+ggpairs(wdbc[,c(2:11,1)], aes(color=diagnosis, alpha=0.75),lower=list(continuous="smooth"),progress = FALSE)+ theme_bw()
+labs(title="Cancer Mean") +
+theme(plot.title=element_text(face='bold',color='black',hjust=0.5,size=12))
+```
+
+
+#LDA Analysis
+library(MASS)
+lda_res <- lda(diagnosis~., bre_train, center = TRUE, scale = TRUE) 
+lda_df <- predict(lda_res, bre_train)$x 
+lda_df<- lda_df+ as.data.frame() + cbind(diagnosis=bre_train$diagnosis)
+lda_res
+
+
+--------------------------------
+#PCA Analysis 
+
+```{r}
+wdbc<-bre1
+features <- c("radius", "texture", "perimeter", "area", "smoothness", "compactness", "concavity", "concave_points", "symmetry", "fractal_dimension")
+names(wdbc) <- c("id", "diagnosis", paste0(features,"_mean"), paste0(features,"_se"), paste0(features,"_worst"))
+wdbc.pr <- prcomp(wdbc[c(3:32)], center = TRUE, scale = TRUE, retx=TRUE)
+summary(wdbc.pr)
+```
+
+```{r}
+screeplot(wdbc.pr, type = "l", npcs = 15, main = "first 10 PCs")
+abline(h = 1, col="red", lty=5)
+legend("topright", legend=c("Eigenvalue = 1"),
+       col=c("red"), lty=5, cex=0.6)
+cumpro <- cumsum(wdbc.pr$sdev^2 / sum(wdbc.pr$sdev^2))
+plot(cumpro[0:15], xlab = "PC #", ylab = "Amount of explained variance", main = "Cumulative variance plot")
+abline(v = 6, col="blue", lty=5)
+abline(h = 0.88759, col="blue", lty=5)
+legend("topleft", legend=c("Cut-off @ PC6"),
+       col=c("blue"), lty=5, cex=0.6)
+```
+```{r}
+plot(wdbc.pr$x[,1],wdbc.pr$x[,2], xlab="PC1 (44.3%)", ylab = "PC2 (19%)", main = "PC1 / PC2 - plot")
+```
+```{r}
+fviz_pca_ind(wdbc.pr, geom.ind = "point", pointshape = 21, 
+             pointsize = 2, 
+             fill.ind = wdbc$diagnosis, 
+             col.ind = "black", 
+             palette = "jco", 
+             addEllipses = TRUE,
+             label = "var",
+             col.var = "black",
+             repel = TRUE,
+             legend.title = "Diagnosis") +
+  ggtitle("2D PCA-plot from 30 feature dataset") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+```{r}
+pca <- prcomp(bre_train[,3:ncol(bre_train)], retx=TRUE, center = TRUE, scale = TRUE)
+plot(pca, type="l")
+pca_df <- as.data.frame(pca$x)
+ggplot(pca_df, aes(x=PC1, y=PC2, col=bre_train$diagnosis)) + geom_point(alpha=0.5)
+```
+```{r}
+g_pc1 <- ggplot(pca_df, aes(x=PC1, fill=bre_train$diagnosis)) + geom_density(alpha=0.25)  
+g_pc2 <- ggplot(pca_df, aes(x=PC2, fill=bre_train$diagnosis)) + geom_density(alpha=0.25)  
+grid.arrange(g_pc1, g_pc2, ncol=2)
+```
+PCA features with highest dimmensions or aligned with the leading principal component are the ones with highest variance.
+```{r}
+ggbiplot(pca, choices=1:2, obs.scale = 1, var.scale = 1, groups = bre_train$diagnosis, 
+  ellipse = TRUE, circle = TRUE, varname.size = 3, ellipse.prob = 0.68, circle.prob = 0.69) +
+  scale_color_discrete(name = 'Diagnosis (B: beningn, M: malignant)') + theme_bw() + 
+  labs(title = "Principal Component Analysis") +
+  theme(legend.direction = 'horizontal', legend.position = 'bottom')
+```
+Plot with PC3&4 & PC 5&6
+```{r}
+pc34<- ggbiplot(pca, choices=3:4, obs.scale = 1, var.scale = 1, groups = bre_train$diagnosis, 
+        ellipse = TRUE, circle = TRUE, varname.size = 3, ellipse.prob = 0.68, circle.prob = 0.69) +
+        scale_color_discrete(name = 'Diagnosis (B: beningn, M: malignant)') + theme_bw() + 
+        labs(title = "Principal Component Analysis") +
+        theme(legend.direction = 'horizontal', legend.position = 'bottom')
+
+pc56<- ggbiplot(pca, choices=5:6, obs.scale = 1, var.scale = 1, groups = bre_train$diagnosis, 
+        ellipse = TRUE, circle = TRUE, varname.size = 3, ellipse.prob = 0.68, circle.prob = 0.69) +
+        scale_color_discrete(name = 'Diagnosis (B: beningn, M: malignant)') + theme_bw() + 
+        labs(title = "Principal Component Analysis") +
+        theme(legend.direction = 'horizontal', legend.position = 'bottom')
+
+grid.arrange(pc34, pc56, ncol=2)
+```
+PC1~PC6 can explain 88.7% of the whole data
+Principal components PC3-PC6 are explaining together 25.5% variation. 
+We can observe that not only there are no significant alignment of a certain feature with one of the PC3:PC6 principal components but also in the planes {PC3, PC4} and {PC5,PC6} the B and M points are not separated in distinct clusters, like it is the case in the {PC1,PC2} plane.
+
+
+```{r}
+pca_model<- preProcess(bre_train, method=c("center", "scale", "pca"))
+# summarize transform parameters
+print(pca_model)
+# transform the dataset using the parameters
+transformed <- predict(pca_model, bre_train)
+# summarize the transformed dataset
+summary(transformed)
+```
+
+t-SNE transform
+ PCA is a linear algorithm, t-SNE is a non-linear dimensionality reduction algorithm. It finds patterns in the data by identifying observed clusters based on similarity of data points wiht multiple features. In the same time, it is not a clustering algorithm, it is a dimmensionality reduction algorithm that can be used as a data exploration and visualization technique. 
+ 
+```{r}
+colors = rainbow(length(unique(bre_train$diagnosis)))
+names(colors) = unique(bre_train$diagnosis)
+set.seed(31452)
+
+tsne <- Rtsne(bre_train, dims=2, perplexity=30, 
+              verbose=TRUE, pca=TRUE, 
+              theta=0.01, max_iter=1000)
+
+```
+```{r}
+plot(tsne$Y, t='n', main="t-Distributed Stochastic Neighbor Embedding (t-SNE)",
+     xlab="t-SNE 1st dimm.", ylab="t-SNE 2nd dimm.")
+text(tsne$Y, labels=bre_train$diagnosis, cex=0.5, col=colors[bre_train$diagnosis])
+```
+The separation of the data in t-SNE 1st and 2nd dimmension plan of the data point clouds for the two values of target (M and B).
+
+
+Prediction Models:---------------------
+
+Different Prediction Model using CARAT library 
+```{r}
+# a) linear algorithms - lda(Linear discriminant analysis)
+set.seed(7)
+fit.lda <- train(diagnosis~., data=bre_train, method="lda", metric=metric, trControl=control)
+fit.lda
+predictions <- predict(fit.lda, bre_test)
+confusionMatrix(predictions, bre_test$diagnosis)
+# b) nonlinear algorithms
+# CART
+set.seed(7)
+fit.cart <- train(diagnosis~., data=bre_train, method="rpart", metric=metric, trControl=control)
+fit.cart
+# kNN (k-nearest neightbour)
+set.seed(7)
+fit.knn <- train(diagnosis~., data=bre_train, method="knn", metric=metric, trControl=control)
+fit.knn
+predictions <- predict(fit.knn, bre_test)
+confusionMatrix(predictions, bre_test$diagnosis)
+# c) advanced algorithms
+# SVM - (support vector machine)
+set.seed(7)
+fit.svm <- train(diagnosis~., data=bre_train, method="svmRadial", metric=metric, trControl=control)
+fit.svm
+# Random Forest
+set.seed(7)
+fit.rf <- train(diagnosis ~., data=bre_train, method="rf", metric=metric, trControl=control)
+fit.rf
+
+# summarize accuracy of models
+results1 <- resamples(list(lda=fit.lda, cart=fit.cart, knn=fit.knn, svm=fit.svm, rf=fit.rf))
+summary(results1)
+
+# compare accuracy of models
+dotplot(results1)
+```
+From Above we can see that SVM having high accuracy.
+```{r}
+prop.table(table(bre_train$diagnosis))
+prop.table(table(bre_test$diagnosis))
+
+
+```
+
+1. Implementation of SVM
+```{r}
+learn_svm <- svm(diagnosis~., data=bre_train)
+#test Model
+pre_svm <- predict(learn_svm, bre_test[,-1])
+cm_svm <- confusionMatrix(pre_svm, bre_test$diagnosis)
+cm_svm
+
+#linear SVM
+set.seed(123)
+tune.out1 = tune(svm, diagnosis~., data = bre_train, kernel = 'linear', ranges = list(gamma = 2^(-1:1) ,cost = c(0.001,0.01,0.1,0.5)))
+summary(tune.out1)
+bestmodel1 = tune.out1$best.model
+prd1 = predict(bestmodel1, bre_test[,-1])
+conf1 = confusionMatrix(prd1,bre_test[,1],positive='B')
+conf1
+fn = conf1[[2]][1,2] 
+tp = conf1[[2]][2,2] 
+Recall = tp/(fn+tp) 
+round(Recall,4)
+
+#polynomial SVM
+set.seed(1234)
+tune.out2 = tune(svm, diagnosis~., data = bre_train, kernel = 'polynomial', ranges = list(gamma = 2^(-1:1),cost =c(0.001,0.01,0.1,0.5)))
+summary(tune.out2)
+bestmodel2 = tune.out2$best.model
+prd2 = predict(bestmodel2, bre_test[,-1])
+conf2 = confusionMatrix(prd2,bre_test[,1],positive='B')
+conf2
+fn = conf2[[2]][1,2] #falseNegative
+tp = conf2[[2]][2,2] #totalpositive
+Recall = tp/(fn+tp) 
+round(Recall,4)
+
+#Gaussian SVM
+set.seed(123)
+tune.out3 = tune(svm, diagnosis~., data = bre_train, kernel = 'radial', ranges = list(gamma = 2^(-1:1) ,cost = c(5,10,50,100)))
+summary(tune.out3)
+bestmodel3 = tune.out3$best.model
+prd3 = predict(bestmodel3, bre_test[,-1])
+conf3 = confusionMatrix(prd3,bre_test[,1],positive='B')
+conf3
+fn = conf3[[2]][1,2] 
+tp = conf3[[2]][2,2] 
+Recall = tp/(fn+tp) 
+round(Recall,4)
+
+#10 fold cross validation for SVM model
+
+svm.model <- train(
+  diagnosis ~ ., 
+  bre_train,
+  method = "svmRadial",
+  trControl = trainControl(
+    method = "cv", 
+    number = 10,
+    verboseIter = TRUE
+  )
+)
+
+predictions <- predict(svm.model, bre_test)
+confusionMatrix(predictions, bre_test$diagnosis)
+```
+high recall means that an algorithm returned most of the relevant results.
+in SVM algorithm :- linear SVM gives more accuracy as well as high recall. 
+
+------------------------------------
+2. C5.0 Implementation
+```{r}
+model <- C5.0(bre_train[,-1], as.factor(bre_train$diagnosis))
+model
+summary(model)
+# check Accuracy
+# trainning
+fitted.results <- predict(model, newdata = bre_train)
+misClasificError <- mean(fitted.results != bre_train$diagnosis, na.rm=TRUE)
+print(paste('Accuracy',1-misClasificError))
+
+# test
+fitted.results <- predict(model, newdata = bre_test)
+misClasificError <- mean(fitted.results != bre_test$diagnosis, na.rm=TRUE)
+print(paste('Accuracy',1-misClasificError))
+
+
+tic()
+m_c50_bst <- C5.0(diagnosis ~., data = bre_train, trials = 5, rule = FALSE)
+toc()
+plot(m_c50_bst)
+  summary(m_c50_bst)
+bre_pred <- predict(m_c50_bst, bre_train)
+confusionMatrix(data=bre_pred, bre_train$diagnosis)
+
+c5.model <- train(
+  diagnosis ~ ., 
+  bre_train,
+  method = "C5.0",
+  trControl = trainControl(
+    method = "cv", 
+    number = 10,
+    verboseIter = TRUE
+  )
+)
+
+predictions <- predict(c5.model, bre_test)
+confusionMatrix(predictions, bre_test$diagnosis)
+```
+3. rpart CART model implementation
+```{r}
+a=rpart.control(minbucket = round(20/3))
+b.rpart.0 <- rpart(diagnosis ~ ., data = bre_train, method = "class")
+b.rpart.1 <- rpart(diagnosis ~ . , data = bre_train, 
+                      control=a, cp=0.001)
+rpart.plot(b.rpart.0,extra = 106)
+#fancyRpartPlot(b.rpart.1)
+predictions <- (predict(b.rpart.0, bre_test,type = "class"))
+confusionMatrix(predictions, bre_test$diagnosis)
+```
+. Prune Implementation
+```{r}
+pru <- prune(b.rpart.0, cp=b.rpart.0$cptable[which.min(b.rpart.0$cptable[,"xerror"]),"CP"])
+pre_pru <- predict(pru, bre_test, type="class")
+cm_pru <-confusionMatrix(pre_pru, bre_test$diagnosis)           
+cm_pru
+```
+4. Classification Tree
+```{r}
+learn_ct <- ctree(diagnosis~., data=bre_train, controls=ctree_control(maxdepth=2))
+pre_ct   <- predict(learn_ct, bre_test)
+cm_ct    <- confusionMatrix(pre_ct, bre_test$diagnosis)
+cm_ct
+
+pp <- party::ctree(formula = diagnosis~.,data = bre_train)
+predictions <- (predict(learn_ct, bre_train, type = "node"))
+plot(pp)
+```
+
+
+
+5. Random Forest implementation
+```{r model}
+df <- bre_train
+df$diagnosis = as.integer(factor(df$diagnosis))-1
+nrows <- nrow(df)
+set.seed(314)
+indexT <- sample(1:nrow(df), 0.7 * nrows)
+#separate train and validation set
+trainset = df[indexT,]
+testset =   df[-indexT,]
+n <- names(trainset)
+```
+```{r random_forest_model, message=FALSE, echo=FALSE}
+
+rf.form <- as.formula(paste("diagnosis ~", paste(n[!n %in% "diagnosis"], collapse = " + ")))
+trainset.rf <- randomForest(diagnosis ~ ., bre_train,ntree=500,importance=TRUE)
+plot(trainset.rf, main="Random Forest: MSE error vs. no of trees")
+```
+
+```{r}
+model_rf_df <- train(diagnosis ~., data = bre_train,
+                     method = "rf")
+                     
+                     
+
+prediction_rf_df <- predict(model_rf_df, bre_test)
+cm_rf_df <- confusionMatrix(prediction_rf_df, bre_test$diagnosis)
+cm_rf_df
+```
+
+
+```{r}
+learn_rf <- randomForest(diagnosis~., data=bre_train, ntree=500, proximity=T, importance=T)
+pre_rf   <- predict(learn_rf, bre_test[,-1])
+cm_rf    <- confusionMatrix(pre_rf, bre_test$diagnosis)
+cm_rf
+```
+
+6. Neural Network
+```{r}
+model_nnet<-nnet(diagnosis ~. , data=bre_train,size=15,rang = 1,decay = 8e-4, maxit = 200)
+
+```
+```{r}
+pred_nnet <- predict(model_nnet, bre_test,type = c("class"))
+(accuracy<-sum(pred_nnet == bre_test$diagnosis)/nrow(bre_test))
+
+
+```
+Create cross table to summarize the result
+```{r}
+library(gmodels)
+CrossTable(bre_test$diagnosis, pred_nnet, prop.chisq = FALSE,
+           prop.c = FALSE, prop.r = FALSE, dnn = c("Actual diagnosis",
+                                                   "Predicted diagnosis"))
+```
+```{r}
+library(NeuralNetTools)
+
+par(mar = numeric(4), family = 'serif')
+plotnet(model_nnet, alpha = 0.6)
+```
+
+
+
+7. KNN
+```{r}
+i=1                          # declaration to initiate for loop
+k.optm=1
+for(i in 1:30){
+    predict <- knn(train=bre_train, test=bre_test, cl=as.factor(bre_train$diagnosis), k=i)
+    acc_test <- c(acc_test,mean(predict==bre_test$diagnosis))
+}
+```
+
+
